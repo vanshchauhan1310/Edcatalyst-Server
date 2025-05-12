@@ -2,10 +2,68 @@ const express = require('express');
 const cors = require('cors');
 const { Resend } = require('resend');
 const admin = require('firebase-admin');
+const https = require('https');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
+
+// CORS Configuration
+const corsOptions = {
+    origin: ['http://localhost:3000', 'http://localhost:5501', 'http://127.0.0.1:5500', 'http://127.0.0.1:3000'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true
+};
+
+// Apply CORS middleware
+app.use(cors(corsOptions));
+
+// SSL/TLS Configuration for development
+const sslOptions = {
+    rejectUnauthorized: process.env.NODE_ENV === 'production', // Only verify SSL in production
+    secureProtocol: 'TLSv1_2_method'
+};
+
+// Initialize Resend with SSL configuration
+const resend = new Resend(process.env.RESEND_API_KEY, {
+    timeout: 10000,
+    retries: 3,
+    retryDelay: 1000,
+    httpsAgent: new https.Agent(sslOptions)
+});
+
+// Verify Resend API key
+if (!process.env.RESEND_API_KEY) {
+    console.error('RESEND_API_KEY is not set in environment variables');
+    process.exit(1);
+}
+
+// Middleware to handle preflight requests
+app.options('*', cors(corsOptions));
+
+// Middleware to log requests
+app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    console.log('Origin:', req.headers.origin);
+    next();
+});
+
+// Middleware to handle errors
+app.use((err, req, res, next) => {
+    console.error('Error:', {
+        message: err.message,
+        stack: err.stack,
+        code: err.code
+    });
+    
+    res.status(500).json({
+        error: 'Internal Server Error',
+        message: process.env.NODE_ENV === 'development' ? err.message : 'An error occurred',
+        details: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+});
 
 // Initialize Firebase Admin
 try {
@@ -43,22 +101,8 @@ db.settings({
 });
 
 // Middleware
-app.use(cors());
 app.use(express.json());
 app.use(express.static('.')); // Serve static files from current directory
-
-// Initialize Resend with timeout configuration
-const resend = new Resend(process.env.RESEND_API_KEY, {
-    timeout: 10000, // 10 second timeout
-    retries: 3,     // Number of retries
-    retryDelay: 1000 // Initial retry delay in ms
-});
-
-// Verify Resend API key
-if (!process.env.RESEND_API_KEY) {
-    console.error('RESEND_API_KEY is not set in environment variables');
-    process.exit(1);
-}
 
 // Helper function to send email with retries
 async function sendEmailWithRetry(emailConfig, maxRetries = 3) {
@@ -70,7 +114,7 @@ async function sendEmailWithRetry(emailConfig, maxRetries = 3) {
             
             // Add exponential backoff delay between retries
             if (attempt > 1) {
-                const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // Max 10 second delay
+                const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
                 console.log(`Waiting ${delay/1000} seconds before retry...`);
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
@@ -90,18 +134,28 @@ async function sendEmailWithRetry(emailConfig, maxRetries = 3) {
                                  error.message.includes('ETIMEDOUT') ||
                                  error.message.includes('ECONNREFUSED') ||
                                  error.message.includes('network') ||
-                                 error.message.includes('timeout');
+                                 error.message.includes('timeout') ||
+                                 error.message.includes('DECODER routines::unsupported') ||
+                                 error.message.includes('Getting metadata from plugin failed');
 
             console.error(`Attempt ${attempt} failed:`, {
                 message: error.message,
                 code: error.code,
                 cause: error.cause,
-                isNetworkError
+                isNetworkError,
+                stack: error.stack
             });
 
             // If it's not a network error or we're out of retries, throw the error
             if (!isNetworkError || attempt === maxRetries) {
                 throw error;
+            }
+
+            // Additional delay for SSL/TLS errors
+            if (error.message.includes('DECODER routines::unsupported')) {
+                const sslDelay = 2000; // 2 seconds
+                console.log(`SSL/TLS error detected. Waiting ${sslDelay/1000} seconds before retry...`);
+                await new Promise(resolve => setTimeout(resolve, sslDelay));
             }
         }
     }
@@ -374,7 +428,10 @@ app.get('/', (req, res) => {
     res.send("EdCatalyst Server - Contact Form & Registration System");
 });
 
+// Start server
 app.listen(port, () => {
+    console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode`);
     console.log(`Server running at http://localhost:${port}`);
-    console.log('Resend API Key configured:', !!process.env.RESEND_API_KEY);
+    console.log('CORS enabled for:', corsOptions.origin);
+    console.log('SSL verification:', sslOptions.rejectUnauthorized ? 'enabled' : 'disabled');
 });
