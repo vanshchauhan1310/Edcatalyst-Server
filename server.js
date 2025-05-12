@@ -58,6 +58,14 @@ app.use((err, req, res, next) => {
         code: err.code
     });
     
+    // Handle path-to-regexp errors specifically
+    if (err instanceof TypeError && err.message.includes('Missing parameter name')) {
+        return res.status(400).json({
+            error: 'Invalid route parameter',
+            message: 'The requested URL contains invalid parameters'
+        });
+    }
+    
     res.status(500).json({
         error: 'Internal Server Error',
         message: process.env.NODE_ENV === 'development' ? err.message : 'An error occurred',
@@ -164,7 +172,7 @@ async function sendEmailWithRetry(emailConfig, maxRetries = 3) {
 }
 
 // Contact Form Email API endpoint
-app.post('/api/send-email', async (req, res) => {
+app.post('/api/send-email', express.json(), async (req, res) => {
     try {
         const { from, name, subject, message } = req.body;
 
@@ -222,7 +230,7 @@ app.post('/api/send-email', async (req, res) => {
 });
 
 // Registration confirmation email endpoint
-app.post('/api/send-confirmation', async (req, res) => {
+app.post('/api/send-confirmation', express.json(), async (req, res) => {
     try {
         const { name, email, course } = req.body;
 
