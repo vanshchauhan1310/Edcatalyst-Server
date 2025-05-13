@@ -10,15 +10,9 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 // CORS Configuration
-const corsOptions = {
-    origin: ['http://localhost:3000', 'http://localhost:5501', 'http://127.0.0.1:5500', 'http://127.0.0.1:3000'],
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true
-};
 
 // Apply CORS middleware
-app.use(cors(corsOptions));
+app.use(cors());
 
 // SSL/TLS Configuration for development
 const sslOptions = {
@@ -41,7 +35,7 @@ if (!process.env.RESEND_API_KEY) {
 }
 
 // Middleware to handle preflight requests
-app.options('*', cors(corsOptions));
+app.options('*', cors());
 
 // Middleware to log requests
 app.use((req, res, next) => {
@@ -75,7 +69,7 @@ app.use((err, req, res, next) => {
 
 // Initialize Firebase Admin
 try {
-    // Initialize with environment variables
+    // Initialize with environment variables and SSL configuration
     const app = admin.initializeApp({
         credential: admin.credential.cert({
             projectId: process.env.FIREBASE_PROJECT_ID,
@@ -83,7 +77,14 @@ try {
             privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')
         }),
         projectId: process.env.FIREBASE_PROJECT_ID,
-        databaseURL: `https://${process.env.FIREBASE_PROJECT_ID}.firebaseio.com`
+        databaseURL: `https://${process.env.FIREBASE_PROJECT_ID}.firebaseio.com`,
+        httpAgent: new https.Agent({
+            rejectUnauthorized: process.env.NODE_ENV === 'production',
+            secureProtocol: 'TLSv1_2_method',
+            ciphers: 'HIGH:!aNULL:!MD5',
+            minVersion: 'TLSv1.2',
+            maxVersion: 'TLSv1.3'
+        })
     });
 
     console.log('Firebase Admin SDK initialized successfully');
@@ -101,11 +102,19 @@ try {
     process.exit(1);
 }
 
-// Initialize Firestore with explicit settings
+// Initialize Firestore with explicit settings and SSL configuration
 const db = admin.firestore();
 db.settings({
     ignoreUndefinedProperties: true,
-    projectId: process.env.FIREBASE_PROJECT_ID
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    ssl: true,
+    httpAgent: new https.Agent({
+        rejectUnauthorized: process.env.NODE_ENV === 'production',
+        secureProtocol: 'TLSv1_2_method',
+        ciphers: 'HIGH:!aNULL:!MD5',
+        minVersion: 'TLSv1.2',
+        maxVersion: 'TLSv1.3'
+    })
 });
 
 // Middleware
@@ -127,7 +136,23 @@ async function sendEmailWithRetry(emailConfig, maxRetries = 3) {
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
 
-            const data = await resend.emails.send(emailConfig);
+            // Configure SSL/TLS for this attempt
+            const sslConfig = {
+                rejectUnauthorized: process.env.NODE_ENV === 'production',
+                secureProtocol: 'TLSv1_2_method',
+                ciphers: 'HIGH:!aNULL:!MD5',
+                minVersion: 'TLSv1.2',
+                maxVersion: 'TLSv1.3'
+            };
+
+            // Update Resend configuration for this attempt
+            const resendWithSSL = new Resend(process.env.RESEND_API_KEY, {
+                timeout: 10000,
+                retries: 0, // We're handling retries manually
+                httpsAgent: new https.Agent(sslConfig)
+            });
+
+            const data = await resendWithSSL.emails.send(emailConfig);
             
             if (data.error) {
                 throw new Error(data.error.message);
@@ -151,7 +176,9 @@ async function sendEmailWithRetry(emailConfig, maxRetries = 3) {
                 code: error.code,
                 cause: error.cause,
                 isNetworkError,
-                stack: error.stack
+                stack: error.stack,
+                attempt,
+                maxRetries
             });
 
             // If it's not a network error or we're out of retries, throw the error
@@ -160,8 +187,9 @@ async function sendEmailWithRetry(emailConfig, maxRetries = 3) {
             }
 
             // Additional delay for SSL/TLS errors
-            if (error.message.includes('DECODER routines::unsupported')) {
-                const sslDelay = 2000; // 2 seconds
+            if (error.message.includes('DECODER routines::unsupported') || 
+                error.message.includes('Getting metadata from plugin failed')) {
+                const sslDelay = 2000 * attempt; // Increasing delay for each attempt
                 console.log(`SSL/TLS error detected. Waiting ${sslDelay/1000} seconds before retry...`);
                 await new Promise(resolve => setTimeout(resolve, sslDelay));
             }
@@ -440,6 +468,6 @@ app.get('/', (req, res) => {
 app.listen(port, () => {
     console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode`);
     console.log(`Server running at http://localhost:${port}`);
-    console.log('CORS enabled for:', corsOptions.origin);
+    console.log('CORS enabled for all origins');
     console.log('SSL verification:', sslOptions.rejectUnauthorized ? 'enabled' : 'disabled');
 });
