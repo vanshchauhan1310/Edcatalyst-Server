@@ -320,7 +320,7 @@ app.post('/api/send-confirmation', express.json(), async (req, res) => {
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
                     <p>Dear ${name},</p>
                     
-                    <p>Thank you for registering for the EdCatalyst Summer Internship Program. We are pleased to confirm that your registration for the ${courseNames[course] || course} internship has been successfully received. Please note that this registration does not guarantee final selection. The next step in the process is the Online Scholarship Examination, which will be conducted on 24 May 2025. Your performance in this assessment will determine your eligibility for the internship as well as any applicable scholarship benefits.</p>
+                    <p>Thank you for registering for the EdCatalyst Summer Internship Program. We are pleased to confirm that your registration for the ${courseNames[course] || course} internship has been successfully received. Please note that this registration does not guarantee final selection. The next step in the process is the Online Scholarship Examination, which will be conducted on within 2 days of your Registration. You will Re Your performance in this assessment will determine your eligibility for the internship as well as any applicable scholarship benefits.</p>
                     
                     <p>Following the examination, shortlisted candidates will receive an official selection email along with further instructions for completing the enrollment, including fee payment and document submission. We encourage you to prepare thoroughly for the exam, as it plays a crucial role in securing your place in the program.</p>
                     
